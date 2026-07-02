@@ -1,0 +1,1639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>机械臂控制系统</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+/* ================================================================
+   CSS Variables
+   ================================================================ */
+:root {
+  --bg-primary: #0a0e14;
+  --bg-secondary: #131820;
+  --bg-card: #1a1f2b;
+  --bg-input: #1e2430;
+  --border: #2a3040;
+  --border-active: #3a4560;
+  --text-primary: #e6eaf0;
+  --text-secondary: #8896ab;
+  --text-muted: #5a6678;
+  --accent: #00b4d8;
+  --accent-glow: rgba(0, 180, 216, 0.3);
+  --success: #00e676;
+  --warning: #ffb74d;
+  --danger: #ff5252;
+  --danger-glow: rgba(255, 82, 82, 0.3);
+  --info: #4fc3f7;
+  --gauge-bg: #1e2636;
+  --gauge-track: #2a3548;
+  --gauge-s1: #00b4d8;
+  --gauge-s2: #7c4dff;
+  --gauge-s3: #00e676;
+  --gauge-grip: #ffb74d;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --transition: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  --font-mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* ================================================================
+   Base
+   ================================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.5;
+}
+
+.bg-grid {
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(0, 180, 216, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 180, 216, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none; z-index: 0;
+}
+
+.container {
+  position: relative; z-index: 1;
+  max-width: 1440px; margin: 0 auto; padding: 16px 20px;
+}
+
+/* ================================================================
+   Header
+   ================================================================ */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px;
+}
+.header-left { display: flex; align-items: center; gap: 10px; }
+.header-logo {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, var(--accent), #0077b6);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+.header-title { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
+.header-subtitle { font-size: 11px; color: var(--text-secondary); }
+
+.status-dot {
+  width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+}
+.status-dot.online { background: var(--success); box-shadow: 0 0 8px var(--success); }
+.status-dot.offline { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+.status-dot.busy { background: var(--warning); box-shadow: 0 0 8px var(--warning); animation: pulse 1.2s infinite; }
+
+.header-status {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-secondary);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ================================================================
+   View System
+   ================================================================ */
+.view { display: none; }
+.view.active { display: flex; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-8px); }
+}
+.fade-in { animation: fadeIn 0.35s ease forwards; }
+.fade-out { animation: fadeOut 0.25s ease forwards; }
+
+/* Transition Overlay */
+.transition-overlay {
+  position: fixed; inset: 0; background: var(--bg-primary);
+  z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.transition-overlay.active { opacity: 1; pointer-events: all; }
+.transition-ring {
+  width: 48px; height: 48px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ================================================================
+   Command View
+   ================================================================ */
+.command-view {
+  flex-direction: column; align-items: center;
+  justify-content: center; min-height: calc(100vh - 140px);
+}
+
+.command-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 44px 36px;
+  width: 100%; max-width: 600px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.command-icon {
+  width: 56px; height: 56px;
+  margin: 0 auto 20px;
+  background: linear-gradient(135deg, rgba(0, 180, 216, 0.15), rgba(0, 119, 182, 0.1));
+  border: 1px solid rgba(0, 180, 216, 0.25);
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+}
+
+.command-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+.command-desc { font-size: 13px; color: var(--text-secondary); margin-bottom: 28px; }
+
+.input-group {
+  display: flex; gap: 0;
+  background: var(--bg-input);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color var(--transition);
+}
+.input-group:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 16px var(--accent-glow);
+}
+
+.command-input {
+  flex: 1;
+  background: transparent; border: none;
+  padding: 13px 16px; font-size: 15px;
+  font-family: var(--font-sans); color: var(--text-primary);
+  outline: none;
+}
+.command-input::placeholder { color: var(--text-muted); }
+
+.execute-btn {
+  background: linear-gradient(135deg, var(--accent), #0077b6);
+  border: none; color: #fff;
+  padding: 13px 26px; font-size: 15px; font-weight: 600;
+  cursor: pointer; letter-spacing: 0.5px;
+  transition: all var(--transition); white-space: nowrap;
+}
+.execute-btn:hover { filter: brightness(1.15); }
+.execute-btn:active { transform: scale(0.97); }
+.execute-btn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+
+.examples {
+  margin-top: 22px;
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+}
+.example-chip {
+  font-size: 12px; padding: 6px 14px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 20px; color: var(--text-secondary);
+  cursor: pointer; transition: all var(--transition);
+}
+.example-chip:hover {
+  border-color: var(--accent); color: var(--accent);
+  background: rgba(0, 180, 216, 0.08);
+}
+
+.validation-hint {
+  margin-top: 10px; font-size: 12px; color: var(--danger);
+  min-height: 18px; transition: opacity var(--transition);
+}
+
+/* ================================================================
+   Execution View — 65/35 Layout
+   ================================================================ */
+.execution-view {
+  flex-direction: row; gap: 14px; align-items: flex-start;
+}
+
+.exec-left {
+  flex: 0 0 65%; min-width: 0;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.exec-right {
+  flex: 1; min-width: 280px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+/* ================================================================
+   Panel base
+   ================================================================ */
+.panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.panel-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 12px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-icon {
+  width: 28px; height: 28px; border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  background: rgba(0, 180, 216, 0.1); color: var(--accent);
+  flex-shrink: 0;
+}
+.panel-title {
+  font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text-secondary);
+}
+.panel-badge {
+  font-size: 10px; margin-left: auto; color: var(--text-muted);
+}
+
+/* ================================================================
+   Camera Panel
+   ================================================================ */
+.camera-panel { padding: 14px; }
+
+.camera-container {
+  position: relative;
+  background: #000;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+}
+
+.camera-container img {
+  width: 100%; height: 100%;
+  object-fit: contain; display: block;
+}
+
+.camera-container canvas {
+  position: absolute; top: 0; left: 0;
+  pointer-events: none;
+}
+
+.camera-overlay {
+  position: absolute; top: 10px; left: 10px;
+  pointer-events: none; z-index: 2;
+}
+
+.camera-badge {
+  font-size: 10px; padding: 3px 9px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: var(--text-primary);
+  backdrop-filter: blur(8px);
+}
+.camera-badge.live {
+  border-color: var(--success); color: var(--success);
+}
+.camera-badge.live::before {
+  content: '';
+  display: inline-block; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--success);
+  margin-right: 5px; vertical-align: middle;
+  animation: pulse 1.5s infinite;
+}
+
+.camera-placeholder {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; height: 100%; color: var(--text-muted);
+  position: absolute; inset: 0;
+}
+.camera-placeholder-icon { font-size: 36px; margin-bottom: 10px; opacity: 0.4; }
+
+/* ================================================================
+   Right Panel — Section Cards
+   ================================================================ */
+.command-section {}
+.command-text {
+  font-family: var(--font-mono); font-size: 13px;
+  color: var(--text-primary); word-break: break-all;
+}
+.command-tags { margin-top: 6px; display: flex; gap: 6px; }
+.command-tag {
+  font-size: 10px; padding: 2px 10px; border-radius: 12px;
+  font-weight: 500;
+}
+.tag-block { background: rgba(0, 180, 216, 0.12); color: var(--accent); border: 1px solid rgba(0, 180, 216, 0.3); }
+.tag-box { background: rgba(124, 77, 255, 0.12); color: var(--gauge-s2); border: 1px solid rgba(124, 77, 255, 0.3); }
+
+/* Phase Section */
+.phase-indicator {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.phase-icon {
+  width: 32px; height: 32px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; flex-shrink: 0;
+  background: rgba(0, 180, 216, 0.1); color: var(--accent);
+  transition: all var(--transition);
+}
+.phase-icon.error { background: rgba(255, 82, 82, 0.15); color: var(--danger); }
+.phase-icon.success { background: rgba(0, 230, 118, 0.15); color: var(--success); }
+.phase-icon.running { }
+.phase-info { flex: 1; min-width: 0; }
+.phase-name { font-size: 13px; font-weight: 600; }
+.phase-desc { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+
+.progress-bar {
+  height: 3px; background: var(--gauge-track); border-radius: 2px;
+  margin-top: 8px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; background: var(--accent); border-radius: 2px;
+  transition: width 0.6s ease; width: 0%;
+}
+
+/* Servo Gauges Section */
+.servo-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+
+.gauge-item { text-align: center; }
+
+.gauge-circle {
+  position: relative;
+  width: 54px; height: 54px; margin: 0 auto 4px;
+}
+.gauge-circle svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.gauge-circle .bg-ring { fill: none; stroke: var(--gauge-track); stroke-width: 5; }
+.gauge-circle .fg-ring {
+  fill: none; stroke-width: 5; stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
+}
+.gauge-label { font-size: 10px; color: var(--text-muted); }
+.gauge-num {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Coordinate Section */
+.coord-block { margin-bottom: 12px; }
+.coord-block:last-child { margin-bottom: 0; }
+
+.coord-block-title {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.coord-block-title .dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  margin-right: 4px; vertical-align: middle;
+}
+
+.coord-row {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
+}
+.coord-item {
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px; text-align: center;
+  transition: border-color var(--transition), background var(--transition);
+}
+.coord-label {
+  font-size: 9px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 2px;
+}
+.coord-value {
+  font-family: var(--font-mono); font-size: 14px; font-weight: 700;
+  color: var(--text-primary); transition: color 0.3s;
+}
+.coord-value.null { color: var(--text-muted); font-weight: 400; font-size: 12px; }
+
+/* Action Buttons */
+.action-bar {
+  display: flex; gap: 8px;
+}
+.btn {
+  flex: 1; padding: 9px 14px; border-radius: 6px; font-size: 12px;
+  font-weight: 500; cursor: pointer; border: 1px solid var(--border);
+  background: var(--bg-input); color: var(--text-secondary);
+  transition: all var(--transition); font-family: var(--font-sans);
+  text-align: center; white-space: nowrap;
+}
+.btn:hover { border-color: var(--border-active); color: var(--text-primary); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.1); }
+.btn.danger { border-color: rgba(255, 82, 82, 0.4); color: var(--danger); }
+.btn.danger:hover { background: rgba(255, 82, 82, 0.1); }
+
+/* Message Box */
+.message-box {
+  margin-top: 6px; padding: 8px 12px; border-radius: var(--radius-sm);
+  font-size: 11px; display: none; word-break: break-all;
+}
+.message-box.show { display: block; animation: fadeIn 0.3s ease; }
+.message-box.error { background: rgba(255, 82, 82, 0.08); border: 1px solid rgba(255, 82, 82, 0.3); color: var(--danger); }
+.message-box.success { background: rgba(0, 230, 118, 0.08); border: 1px solid rgba(0, 230, 118, 0.3); color: var(--success); }
+.message-box.info { background: rgba(0, 180, 216, 0.08); border: 1px solid rgba(0, 180, 216, 0.3); color: var(--info); }
+
+/* ================================================================
+   Annotation Colors (mapped in JS)
+   ================================================================ */
+.annotation-color-green  { --anno-stroke: #00e676; --anno-fill: rgba(0, 230, 118, 0.15); }
+.annotation-color-red    { --anno-stroke: #ff5252; --anno-fill: rgba(255, 82, 82, 0.15); }
+.annotation-color-blue   { --anno-stroke: #448aff; --anno-fill: rgba(68, 138, 255, 0.15); }
+.annotation-color-orange { --anno-stroke: #ff9100; --anno-fill: rgba(255, 145, 0, 0.15); }
+.annotation-color-purple { --anno-stroke: #e040fb; --anno-fill: rgba(224, 64, 251, 0.15); }
+.annotation-color-pink   { --anno-stroke: #ff4081; --anno-fill: rgba(255, 64, 129, 0.15); }
+.annotation-color-yellow { --anno-stroke: #ffd600; --anno-fill: rgba(255, 214, 0, 0.15); }
+
+/* Data update flash */
+@keyframes dataFlash {
+  0% { color: var(--accent); }
+  100% { color: var(--text-primary); }
+}
+.data-updated { animation: dataFlash 0.6s ease-out; }
+
+/* ================================================================
+   Responsive — narrow screen
+   ================================================================ */
+@media (max-width: 1100px) {
+  .execution-view {
+    flex-direction: column;
+  }
+  .exec-left {
+    flex: auto; width: 100%;
+  }
+  .exec-right {
+    flex: auto; width: 100%; min-width: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .exec-right .panel:nth-child(5) {
+    grid-column: 1 / -1;
+  }
+  .servo-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+  }
+  .gauge-circle {
+    width: 44px; height: 44px;
+  }
+  .gauge-num { font-size: 10px; }
+}
+
+@media (max-width: 600px) {
+  .exec-right {
+    grid-template-columns: 1fr;
+  }
+  .servo-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .command-card {
+    padding: 28px 18px;
+  }
+  .execute-btn {
+    padding: 13px 18px; font-size: 13px;
+  }
+}
+
+/* ================================================================
+   Health Alerts
+   ================================================================ */
+.health-alerts {
+  display: none; flex-direction: column; gap: 6px;
+}
+.health-alerts.has-alerts { display: flex; }
+
+.health-alert {
+  padding: 8px 12px; border-radius: var(--radius-sm);
+  font-size: 11px; display: flex; align-items: center; gap: 7px;
+  animation: fadeIn 0.3s ease;
+}
+.health-alert.warning {
+  background: rgba(255, 183, 77, 0.1);
+  border: 1px solid rgba(255, 183, 77, 0.3);
+  color: var(--warning);
+}
+.health-alert.error {
+  background: rgba(255, 82, 82, 0.1);
+  border: 1px solid rgba(255, 82, 82, 0.3);
+  color: var(--danger);
+}
+.health-alert-icon { font-size: 13px; flex-shrink: 0; }
+
+/* Status Dot States */
+.status-dot.warning { background: var(--warning); box-shadow: 0 0 8px var(--warning); animation: pulse 2s infinite; }
+.status-dot.error   { background: var(--danger);  box-shadow: 0 0 8px var(--danger);  animation: pulse 1s infinite; }
+.status-dot.ok      { background: var(--success); box-shadow: 0 0 8px var(--success); }
+
+/* Offline Banner */
+.offline-banner {
+  width: 100%; max-width: 600px; margin-bottom: 14px;
+  padding: 10px 16px;
+  background: rgba(255, 183, 77, 0.08);
+  border: 1px solid rgba(255, 183, 77, 0.25);
+  border-radius: var(--radius-sm);
+  font-size: 12px; color: var(--warning);
+  display: none; align-items: center; gap: 8px;
+  text-align: left;
+}
+.offline-banner.show { display: flex; animation: fadeIn 0.3s ease; }
+
+/* ================================================================
+   Settings Modal
+   ================================================================ */
+.settings-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  z-index: 200; display: none; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px);
+}
+.settings-overlay.show { display: flex; }
+
+.settings-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 28px 22px;
+  width: 100%; max-width: 480px;
+  box-shadow: 0 8px 48px rgba(0,0,0,0.6);
+  animation: fadeIn 0.25s ease;
+}
+.settings-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20px;
+}
+.settings-title { font-size: 16px; font-weight: 600; }
+.settings-close {
+  width: 32px; height: 32px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-secondary); cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all var(--transition);
+}
+.settings-close:hover { border-color: var(--danger); color: var(--danger); }
+
+.settings-section {
+  margin-bottom: 16px;
+}
+.settings-section-title {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text-muted);
+  margin-bottom: 10px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-field { margin-bottom: 12px; }
+.settings-label {
+  display: block; font-size: 11px; color: var(--text-secondary);
+  margin-bottom: 4px; font-weight: 500;
+}
+.settings-input, .settings-select {
+  width: 100%; padding: 9px 12px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 6px; font-size: 13px; color: var(--text-primary);
+  font-family: var(--font-mono); outline: none;
+  transition: border-color var(--transition);
+}
+.settings-input:focus, .settings-select:focus {
+  border-color: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
+}
+.settings-input::placeholder { color: var(--text-muted); }
+.settings-select { cursor: pointer; appearance: none; }
+
+.settings-hint {
+  font-size: 10px; color: var(--text-muted); margin-top: 3px;
+}
+.settings-hint.warn { color: var(--warning); }
+
+.settings-actions {
+  display: flex; gap: 8px; margin-top: 20px;
+}
+.settings-actions .btn { flex: 1; padding: 10px; font-size: 13px; }
+
+/* Gear button in header */
+.header-gear {
+  width: 32px; height: 32px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-secondary); cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all var(--transition); margin-right: 8px;
+}
+.header-gear:hover { border-color: var(--accent); color: var(--accent); transform: rotate(30deg); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-active); }
+</style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<div class="container">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="header-logo">&#9874;</div>
+      <div>
+        <div class="header-title">机械臂控制系统</div>
+        <div class="header-subtitle">Robot Arm Control Interface</div>
+      </div>
+    </div>
+    <div class="header-status">
+      <button class="header-gear" id="gearBtn" onclick="openSettings()" title="设置">&#9881;</button>
+      <span id="statusLabel">未连接</span>
+      <span id="statusDot" class="status-dot offline"></span>
+    </div>
+  </header>
+
+  <!-- ================================================================
+       Command View
+       ================================================================ -->
+  <div id="commandView" class="view active command-view">
+    <div class="offline-banner" id="offlineBanner">
+      <span>&#9888;</span>
+      <span id="offlineBannerText">离线模式——系统已启动但未检测到硬件连接</span>
+    </div>
+    <div class="command-card">
+      <div class="command-icon">&#9881;</div>
+      <div class="command-title">发送控制指令</div>
+      <div class="command-desc">输入自然语言描述抓取任务，系统将自动解析并执行</div>
+
+      <div class="input-group" id="inputGroup">
+        <input
+          type="text" id="commandInput" class="command-input"
+          placeholder="例如：抓取绿色物块到红色盒子"
+          autocomplete="off" autofocus
+        >
+        <button class="execute-btn" id="executeBtn" onclick="executeCommand()">执 行</button>
+      </div>
+
+      <div class="validation-hint" id="validationHint"></div>
+
+      <div class="examples">
+        <span class="example-chip" data-cmd="抓取绿色物块到红色盒子">绿色 → 红色盒子</span>
+        <span class="example-chip" data-cmd="抓取蓝色物块到蓝色盒子">蓝色 → 蓝色盒子</span>
+        <span class="example-chip" data-cmd="抓取红色物块到绿色盒子">红色 → 绿色盒子</span>
+        <span class="example-chip" data-cmd="把黄色方块放到红色盒子里">黄色 → 红色盒子</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       Execution View
+       ================================================================ -->
+  <div id="executionView" class="view execution-view">
+
+    <!-- LEFT: Camera -->
+    <div class="exec-left">
+      <div class="panel camera-panel">
+        <div class="panel-header">
+          <div class="panel-icon">&#128247;</div>
+          <span class="panel-title">实时摄像头</span>
+          <span class="panel-badge camera-badge live" id="camBadge">LIVE</span>
+        </div>
+        <div class="camera-container" id="cameraContainer">
+          <div class="camera-placeholder" id="cameraPlaceholder">
+            <div class="camera-placeholder-icon">&#128247;</div>
+            <div style="font-size: 12px;">等待摄像头连接...</div>
+          </div>
+          <img id="cameraFeed" src="" alt="Camera Feed" style="display: none;">
+          <canvas id="annotationCanvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Info Panels -->
+    <div class="exec-right">
+
+      <!-- Health Alerts -->
+      <div class="health-alerts" id="healthAlerts"></div>
+
+      <!-- Section 1: Current Command -->
+      <div class="panel command-section">
+        <div class="panel-header">
+          <div class="panel-icon" style="background: rgba(255, 183, 77, 0.1); color: var(--warning);">&#128221;</div>
+          <span class="panel-title">当前指令</span>
+        </div>
+        <div class="command-text" id="currentCommand">--</div>
+        <div class="command-tags" id="commandTags"></div>
+      </div>
+
+      <!-- Section 2: Task Phase -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-icon">&#9889;</div>
+          <span class="panel-title">任务状态</span>
+          <span class="panel-badge" id="phaseTag">IDLE</span>
+        </div>
+        <div class="phase-indicator">
+          <div class="phase-icon" id="phaseIcon">&#9678;</div>
+          <div class="phase-info">
+            <div class="phase-name" id="phaseName">等待指令</div>
+            <div class="phase-desc" id="phaseDesc">系统就绪，请输入控制指令</div>
+          </div>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="message-box" id="messageBox"></div>
+      </div>
+
+      <!-- Section 3: Servo Angles -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-icon">&#9883;</div>
+          <span class="panel-title">舵机角度</span>
+        </div>
+        <div class="servo-grid">
+          <div class="gauge-item">
+            <div class="gauge-circle" id="gauge1">
+              <svg viewBox="0 0 64 64">
+                <circle class="bg-ring" cx="32" cy="32" r="27"/>
+                <circle class="fg-ring" id="ring1" cx="32" cy="32" r="27"
+                  stroke-dasharray="169.646" stroke-dashoffset="84.823"
+                  stroke="var(--gauge-s1)"/>
+              </svg>
+              <span class="gauge-num" id="gaugeNum1">90</span>
+            </div>
+            <div class="gauge-label">舵机 1</div>
+          </div>
+          <div class="gauge-item">
+            <div class="gauge-circle" id="gauge2">
+              <svg viewBox="0 0 64 64">
+                <circle class="bg-ring" cx="32" cy="32" r="27"/>
+                <circle class="fg-ring" id="ring2" cx="32" cy="32" r="27"
+                  stroke-dasharray="169.646" stroke-dashoffset="84.823"
+                  stroke="var(--gauge-s2)"/>
+              </svg>
+              <span class="gauge-num" id="gaugeNum2">90</span>
+            </div>
+            <div class="gauge-label">舵机 2</div>
+          </div>
+          <div class="gauge-item">
+            <div class="gauge-circle" id="gauge3">
+              <svg viewBox="0 0 64 64">
+                <circle class="bg-ring" cx="32" cy="32" r="27"/>
+                <circle class="fg-ring" id="ring3" cx="32" cy="32" r="27"
+                  stroke-dasharray="169.646" stroke-dashoffset="84.823"
+                  stroke="var(--gauge-s3)"/>
+              </svg>
+              <span class="gauge-num" id="gaugeNum3">90</span>
+            </div>
+            <div class="gauge-label">舵机 3</div>
+          </div>
+          <div class="gauge-item">
+            <div class="gauge-circle" id="gaugeGrip">
+              <svg viewBox="0 0 64 64">
+                <circle class="bg-ring" cx="32" cy="32" r="27"/>
+                <circle class="fg-ring" id="ringGrip" cx="32" cy="32" r="27"
+                  stroke-dasharray="169.646" stroke-dashoffset="122.4"
+                  stroke="var(--gauge-grip)"/>
+              </svg>
+              <span class="gauge-num" id="gaugeNumGrip">50</span>
+            </div>
+            <div class="gauge-label">夹爪</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 4: Coordinates -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-icon">&#8986;</div>
+          <span class="panel-title">坐标信息</span>
+        </div>
+
+        <div class="coord-block" id="blockCoordSection">
+          <div class="coord-block-title">
+            <span class="dot" id="blockDot" style="background: var(--text-muted);"></span>
+            物块坐标 (mm)
+          </div>
+          <div class="coord-row">
+            <div class="coord-item"><div class="coord-label">X</div><div class="coord-value null" id="bwx">--</div></div>
+            <div class="coord-item"><div class="coord-label">Y</div><div class="coord-value null" id="bwy">--</div></div>
+            <div class="coord-item"><div class="coord-label">Z</div><div class="coord-value null" id="bwz">--</div></div>
+          </div>
+          <div class="coord-block-title" style="margin-top: 4px;">像素坐标 (px)</div>
+          <div class="coord-row">
+            <div class="coord-item"><div class="coord-label">U</div><div class="coord-value null" id="bpx">--</div></div>
+            <div class="coord-item"><div class="coord-label">V</div><div class="coord-value null" id="bpy">--</div></div>
+            <div class="coord-item" style="visibility: hidden;"><div class="coord-label">-</div><div class="coord-value null">--</div></div>
+          </div>
+        </div>
+
+        <div class="coord-block" id="boxCoordSection">
+          <div class="coord-block-title">
+            <span class="dot" id="boxDot" style="background: var(--text-muted);"></span>
+            盒子坐标 (mm)
+          </div>
+          <div class="coord-row">
+            <div class="coord-item"><div class="coord-label">X</div><div class="coord-value null" id="boxwx">--</div></div>
+            <div class="coord-item"><div class="coord-label">Y</div><div class="coord-value null" id="boxwy">--</div></div>
+            <div class="coord-item"><div class="coord-label">Z</div><div class="coord-value null" id="boxwz">--</div></div>
+          </div>
+          <div class="coord-block-title" style="margin-top: 4px;">像素坐标 (px)</div>
+          <div class="coord-row">
+            <div class="coord-item"><div class="coord-label">U</div><div class="coord-value null" id="boxpx">--</div></div>
+            <div class="coord-item"><div class="coord-label">V</div><div class="coord-value null" id="boxpy">--</div></div>
+            <div class="coord-item" style="visibility: hidden;"><div class="coord-label">-</div><div class="coord-value null">--</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 5: Actions -->
+      <div class="panel">
+        <div class="action-bar">
+          <button class="btn primary" id="newTaskBtn" onclick="backToCommand()">&#8634; 新任务</button>
+          <button class="btn danger" id="stopBtn" onclick="stopExecution()" style="display: none;">&#9632; 停止</button>
+          <button class="btn" onclick="moveHome()">&#8635; 回零</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Transition Overlay -->
+  <div class="transition-overlay" id="transitionOverlay">
+    <div class="transition-ring"></div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="settings-overlay" id="settingsOverlay">
+    <div class="settings-panel">
+      <div class="settings-header">
+        <span class="settings-title">&#9881; 系统设置</span>
+        <button class="settings-close" onclick="closeSettings()">&times;</button>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">连接</div>
+        <div class="settings-field">
+          <label class="settings-label">后端地址</label>
+          <input type="text" class="settings-input" id="setBackendUrl" placeholder="localhost:5000">
+          <div class="settings-hint">Vercel 部署时填入本机局域网 IP:5000</div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">LLM 配置</div>
+        <div class="settings-field">
+          <label class="settings-label">API 地址</label>
+          <input type="text" class="settings-input" id="setApiBase" placeholder="https://api.openai.com/v1">
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">API 密钥</label>
+          <input type="password" class="settings-input" id="setApiKey" placeholder="sk-... (通过环境变量设置)">
+          <div class="settings-hint warn">密钥通过环境变量 LLM_API_KEY 设置，此处仅显示状态</div>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">模型名称</label>
+          <input type="text" class="settings-input" id="setModel" placeholder="gpt-4o-mini">
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">硬件</div>
+        <div class="settings-field">
+          <label class="settings-label">串口</label>
+          <select class="settings-select" id="setSerialPort">
+            <option value="">检测中...</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">摄像头 ID</label>
+          <input type="number" class="settings-input" id="setCameraId" placeholder="0" min="0" max="9">
+        </div>
+      </div>
+
+      <div class="settings-actions">
+        <button class="btn" onclick="closeSettings()">取消</button>
+        <button class="btn primary" onclick="saveSettings()">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ================================================================
+   Constants & State
+   ================================================================ */
+var CIRCUMFERENCE = 2 * Math.PI * 27;
+
+// 后端地址：优先从 localStorage 读取，否则使用当前页面 host
+var backendUrl = localStorage.getItem('backendUrl') || window.location.origin;
+var socket = io(backendUrl, {
+  transports: ['websocket', 'polling']
+});
+var prevServo = [90, 90, 90, 50];
+var executionActive = false;
+
+var currentBlockColor = null;
+var currentBoxColor = null;
+
+/* ================================================================
+   DOM Helpers
+   ================================================================ */
+function $(id) { return document.getElementById(id); }
+
+/* ================================================================
+   View Switching
+   ================================================================ */
+function showCommandView() {
+  var ev = $('executionView');
+  var cv = $('commandView');
+  executionActive = false;
+
+  ev.classList.remove('active');
+  ev.classList.add('fade-out');
+
+  setTimeout(function () {
+    ev.classList.remove('fade-out');
+    cv.classList.add('active', 'fade-in');
+    setTimeout(function () { cv.classList.remove('fade-in'); }, 360);
+  }, 240);
+
+  $('executeBtn').disabled = false;
+  $('commandInput').value = '';
+  $('validationHint').textContent = '';
+  $('commandInput').focus();
+  resetCoordDisplays();
+  clearAnnotations();
+  updatePhase('idle', '等待指令', 'idle', 0);
+  $('messageBox').classList.remove('show', 'error', 'success', 'info');
+  $('currentCommand').textContent = '--';
+  $('commandTags').innerHTML = '';
+  currentBlockColor = null;
+  currentBoxColor = null;
+  updateBlockDot(null);
+  updateBoxDot(null);
+}
+
+function showExecutionView() {
+  var cv = $('commandView');
+  var ov = $('transitionOverlay');
+
+  ov.classList.add('active');
+
+  setTimeout(function () {
+    cv.classList.remove('active');
+    $('executionView').classList.add('active', 'fade-in');
+
+    setTimeout(function () {
+      $('executionView').classList.remove('fade-in');
+      ov.classList.remove('active');
+    }, 350);
+  }, 420);
+
+  executionActive = true;
+  $('executeBtn').disabled = true;
+  $('stopBtn').style.display = 'inline-block';
+  $('newTaskBtn').style.display = 'none';
+}
+
+function backToCommand() {
+  showCommandView();
+}
+
+/* ================================================================
+   Execute / Stop / Home
+   ================================================================ */
+function executeCommand() {
+  var cmd = $('commandInput').value.trim();
+  if (!cmd) {
+    $('validationHint').textContent = '请输入控制指令';
+    return;
+  }
+  if (!validateInput()) { return; }
+
+  resetCoordDisplays();
+  clearAnnotations();
+  $('currentCommand').textContent = cmd;
+  $('commandTags').innerHTML = '';
+  currentBlockColor = null;
+  currentBoxColor = null;
+  updateBlockDot(null);
+  updateBoxDot(null);
+
+  showExecutionView();
+
+  updatePhase('parsing', '正在解析指令...', 'running', 5);
+  socket.emit('execute_command', { command: cmd });
+}
+
+function validateInput() {
+  var val = $('commandInput').value.trim();
+  var hint = $('validationHint');
+  if (!val) { hint.textContent = ''; return true; }
+  var keywords = ['抓取', '放到', '放入', '拿到', '把', '到', 'grab', 'put', 'pick'];
+  var hasKeyword = keywords.some(function (k) { return val.includes(k); });
+  if (!hasKeyword) {
+    hint.textContent = '提示：请输入包含"抓取"和"放置"等关键词的自然语言指令';
+    return false;
+  }
+  hint.textContent = '';
+  return true;
+}
+
+function stopExecution() {
+  socket.emit('stop_execution');
+  $('stopBtn').style.display = 'none';
+  $('newTaskBtn').style.display = 'inline-block';
+  executionActive = false;
+}
+
+function moveHome() {
+  socket.emit('manual_move_home');
+}
+
+/* ================================================================
+   Coordinate Display Helpers
+   ================================================================ */
+function resetCoordDisplays() {
+  var ids = ['bwx','bwy','bwz','bpx','bpy','boxwx','boxwy','boxwz','boxpx','boxpy'];
+  ids.forEach(function (id) { $(id).textContent = '--'; $(id).className = 'coord-value null'; });
+}
+
+function setCoord(elId, value, unit) {
+  var el = $(elId);
+  if (value === null || value === undefined) {
+    el.textContent = '--';
+    el.className = 'coord-value null';
+  } else {
+    var v = typeof value === 'number' ? value.toFixed(1) : value;
+    el.textContent = v + (unit || '');
+    el.className = 'coord-value data-updated';
+    setTimeout(function () { el.className = 'coord-value'; }, 600);
+  }
+}
+
+/* ================================================================
+   Gauge Rendering
+   ================================================================ */
+function updateGauge(ringId, numId, value, maxVal) {
+  var ring = $(ringId);
+  var num = $(numId);
+  var ratio = Math.max(0, Math.min(1, value / maxVal));
+  var offset = CIRCUMFERENCE * (1 - ratio);
+  ring.setAttribute('stroke-dashoffset', offset);
+  num.textContent = Math.round(value);
+}
+
+/* ================================================================
+   Phase Display
+   ================================================================ */
+function updatePhase(phase, desc, iconType, progress) {
+  $('phaseName').textContent = desc;
+  $('phaseDesc').textContent = '';
+  $('phaseTag').textContent = phase.toUpperCase();
+  $('progressFill').style.width = progress + '%';
+
+  var iconEl = $('phaseIcon');
+  iconEl.className = 'phase-icon';
+  if (iconType === 'error') {
+    iconEl.classList.add('error');
+    iconEl.innerHTML = '&#10007;';
+  } else if (iconType === 'success') {
+    iconEl.classList.add('success');
+    iconEl.innerHTML = '&#10003;';
+  } else if (iconType === 'running') {
+    iconEl.innerHTML = '&#9881;';
+  } else {
+    iconEl.innerHTML = '&#9678;';
+  }
+}
+
+function showMessage(msg, type) {
+  var box = $('messageBox');
+  box.textContent = msg;
+  box.className = 'message-box show ' + type;
+  setTimeout(function () {
+    if (box.textContent === msg) {
+      box.classList.remove('show');
+    }
+  }, 8000);
+}
+
+/* ================================================================
+   Canvas Annotation
+   ================================================================ */
+var blockAnno = null;  // { cx, cy, color }
+var boxAnno = null;    // { cx, cy, color }
+
+function clearAnnotations() {
+  blockAnno = null;
+  boxAnno = null;
+  drawAnnotationFrame();
+}
+
+function updateBlockAnnotation(cx, cy, color) {
+  if (cx === null || cy === null) {
+    blockAnno = null;
+  } else {
+    blockAnno = { cx: cx, cy: cy, color: color || 'green' };
+  }
+  drawAnnotationFrame();
+}
+
+function updateBoxAnnotation(cx, cy, color) {
+  if (cx === null || cy === null) {
+    boxAnno = null;
+  } else {
+    boxAnno = { cx: cx, cy: cy, color: color || 'red' };
+  }
+  drawAnnotationFrame();
+}
+
+function drawAnnotationFrame() {
+  var canvas = $('annotationCanvas');
+  var img = $('cameraFeed');
+  var ctx = canvas.getContext('2d');
+
+  var displayW = img.clientWidth;
+  var displayH = img.clientHeight;
+
+  if (!displayW || !displayH || img.style.display === 'none') {
+    canvas.width = 640;
+    canvas.height = 480;
+    ctx.clearRect(0, 0, 640, 480);
+    return;
+  }
+
+  if (canvas.width !== displayW || canvas.height !== displayH) {
+    canvas.width = displayW;
+    canvas.height = displayH;
+  }
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  drawOneAnnotation(ctx, blockAnno, 'block');
+  drawOneAnnotation(ctx, boxAnno, 'box');
+}
+
+function drawOneAnnotation(ctx, anno, type) {
+  if (!anno || !anno.cx || !anno.cy) return;
+
+  var color = anno.color || 'green';
+  var cx = anno.cx;
+  var cy = anno.cy;
+
+  // Map color name to CSS color
+  var colorMap = {
+    green:  '#00e676', orange: '#ff9100', purple: '#e040fb',
+    pink:   '#ff4081', blue:    '#448aff', yellow: '#ffd600',
+    red:    '#ff5252'
+  };
+  var strokeColor = colorMap[color] || '#ffffff';
+  var fillColor = strokeColor + '26'; // ~15% alpha
+
+  var boxW = 80;
+  var boxH = 50;
+  var x = cx - boxW / 2;
+  var y = cy - boxH / 2;
+  var r = 4;
+
+  // Rectangle (manual rounded rect for broad browser compat)
+  ctx.strokeStyle = strokeColor;
+  ctx.fillStyle = fillColor;
+  ctx.lineWidth = 3;
+  if (type === 'box') {
+    ctx.setLineDash([6, 3]);
+  } else {
+    ctx.setLineDash([]);
+  }
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + boxW - r, y);
+  ctx.arcTo(x + boxW, y, x + boxW, y + r, r);
+  ctx.lineTo(x + boxW, y + boxH - r);
+  ctx.arcTo(x + boxW, y + boxH, x + boxW - r, y + boxH, r);
+  ctx.lineTo(x + r, y + boxH);
+  ctx.arcTo(x, y + boxH, x, y + boxH - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Label
+  var label = type === 'block'
+    ? '● ' + color + ' (' + Math.round(cx) + ', ' + Math.round(cy) + ')'
+    : '□ ' + color + ' box (' + Math.round(cx) + ', ' + Math.round(cy) + ')';
+
+  ctx.font = 'bold 11px Consolas, monospace';
+  var textWidth = ctx.measureText(label).width;
+  var padX = 6;
+  var padY = 4;
+  var labelH = 18;
+  var labelY = y - labelH - 2;
+  if (labelY < 2) { labelY = y + boxH + 2; }
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 1;
+  var lw = textWidth + padX * 2;
+  var lr = 3;
+  ctx.beginPath();
+  ctx.moveTo(x + lr, labelY);
+  ctx.lineTo(x + lw - lr, labelY);
+  ctx.arcTo(x + lw, labelY, x + lw, labelY + lr, lr);
+  ctx.lineTo(x + lw, labelY + labelH - lr);
+  ctx.arcTo(x + lw, labelY + labelH, x + lw - lr, labelY + labelH, lr);
+  ctx.lineTo(x + lr, labelY + labelH);
+  ctx.arcTo(x, labelY + labelH, x, labelY + labelH - lr, lr);
+  ctx.lineTo(x, labelY + lr);
+  ctx.arcTo(x, labelY, x + lr, labelY, lr);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = strokeColor;
+  ctx.fillText(label, x + padX, labelY + labelH - padY);
+
+  // Center dot
+  ctx.fillStyle = strokeColor;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/* ================================================================
+   Dot Color Helpers
+   ================================================================ */
+var dotColorMap = {
+  green: '#00e676', orange: '#ff9100', purple: '#e040fb',
+  pink: '#ff4081', blue: '#448aff', yellow: '#ffd600', red: '#ff5252'
+};
+
+function updateBlockDot(color) {
+  var dot = $('blockDot');
+  if (color && dotColorMap[color]) {
+    dot.style.background = dotColorMap[color];
+  } else {
+    dot.style.background = 'var(--text-muted)';
+  }
+}
+
+function updateBoxDot(color) {
+  var dot = $('boxDot');
+  if (color && dotColorMap[color]) {
+    dot.style.background = dotColorMap[color];
+  } else {
+    dot.style.background = 'var(--text-muted)';
+  }
+}
+
+/* ================================================================
+   Health Alerts Rendering
+   ================================================================ */
+function renderHealthAlerts(healthErrors) {
+  var container = $('healthAlerts');
+  if (!healthErrors || healthErrors.length === 0) {
+    container.innerHTML = '';
+    container.classList.remove('has-alerts');
+    return;
+  }
+
+  var html = '';
+  healthErrors.forEach(function (e) {
+    var icon = e.level === 'error' ? '&#10007;' : '&#9888;';
+    html += '<div class="health-alert ' + e.level + '">' +
+      '<span class="health-alert-icon">' + icon + '</span>' +
+      '<span>' + e.message + '</span>' +
+      '</div>';
+  });
+  container.innerHTML = html;
+  container.classList.add('has-alerts');
+}
+
+function updateStatusDot(armConnected, cameraOk, healthErrors) {
+  var dot = $('statusDot');
+  var label = $('statusLabel');
+
+  // Reset classes
+  dot.className = 'status-dot';
+
+  var hasErrors = healthErrors && healthErrors.some(function (e) { return e.level === 'error'; });
+  var hasWarnings = healthErrors && healthErrors.length > 0;
+
+  if (hasErrors) {
+    dot.classList.add('error');
+    label.textContent = '故障';
+  } else if (hasWarnings) {
+    dot.classList.add('warning');
+    label.textContent = '部分正常';
+  } else if (armConnected && cameraOk) {
+    dot.classList.add('ok');
+    label.textContent = '全部正常';
+  } else {
+    dot.classList.add('offline');
+    label.textContent = '未连接';
+  }
+
+  // Offline banner
+  var banner = $('offlineBanner');
+  if (!armConnected && !cameraOk) {
+    $('offlineBannerText').textContent = '离线模式——未检测到机械臂和摄像头连接';
+    banner.classList.add('show');
+  } else if (!armConnected) {
+    $('offlineBannerText').textContent = '机械臂未连接——请检查USB串口';
+    banner.classList.add('show');
+  } else if (!cameraOk) {
+    $('offlineBannerText').textContent = '摄像头未连接——请检查CAMERA_ID配置';
+    banner.classList.add('show');
+  } else {
+    banner.classList.remove('show');
+  }
+}
+
+/* ================================================================
+   Socket.IO: State Update
+   ================================================================ */
+var phaseMap = {
+  'idle':             ['等待指令',       'idle',    0],
+  'parsing':          ['解析指令中...',   'running', 8],
+  'detecting_block':  ['检测物块中...',   'running', 15],
+  'block_detected':   ['物块已识别',      'running', 25],
+  'homing':           ['机械臂回零中...', 'running', 33],
+  'opening_gripper':  ['张开夹爪...',     'running', 38],
+  'moving_to_block':  ['移动到抓取点...', 'running', 45],
+  'closing_gripper':  ['抓取物块中...',   'running', 55],
+  'lifting_block':    ['抬起物块...',     'running', 62],
+  'detecting_box':    ['检测盒子中...',   'running', 70],
+  'box_detected':     ['盒子已识别',      'running', 78],
+  'moving_to_box':    ['移动到放置点...', 'running', 85],
+  'releasing_block':  ['放置物块中...',   'running', 92],
+  'lifting_arm':      ['抬起机械臂...',   'running', 96],
+  'homing_final':     ['回零中...',       'running', 98],
+  'completed':        ['任务完成',        'success', 100],
+  'error':            ['执行出错',        'error',   0],
+  'stopped':          ['已停止',          'error',   0]
+};
+
+socket.on('state_update', function (state) {
+  if (!executionActive && state.phase !== 'idle') return;
+
+  // --- Health & Connection Status ---
+  updateStatusDot(
+    state.arm_connected !== undefined ? state.arm_connected : state.connected,
+    state.camera_ok !== undefined ? state.camera_ok : false,
+    state.health_errors || []
+  );
+  renderHealthAlerts(state.health_errors || []);
+
+  // --- Servo Gauges ---
+  var s1 = state.servo_1, s2 = state.servo_2, s3 = state.servo_3, grip = state.grip;
+  if (s1 !== prevServo[0] || s2 !== prevServo[1] || s3 !== prevServo[2] || grip !== prevServo[3]) {
+    updateGauge('ring1', 'gaugeNum1', s1, 180);
+    updateGauge('ring2', 'gaugeNum2', s2, 180);
+    updateGauge('ring3', 'gaugeNum3', s3, 180);
+    updateGauge('ringGrip', 'gaugeNumGrip', grip, 180);
+    prevServo = [s1, s2, s3, grip];
+  }
+
+  // --- Coordinates ---
+  setCoord('bwx', state.block_world_x);
+  setCoord('bwy', state.block_world_y);
+  setCoord('bwz', state.block_world_z);
+  setCoord('bpx', state.block_pixel_x);
+  setCoord('bpy', state.block_pixel_y);
+  setCoord('boxwx', state.box_world_x);
+  setCoord('boxwy', state.box_world_y);
+  setCoord('boxwz', state.box_world_z);
+  setCoord('boxpx', state.box_pixel_x);
+  setCoord('boxpy', state.box_pixel_y);
+
+  // --- Command Tags ---
+  if (state.block_color) {
+    currentBlockColor = state.block_color;
+    currentBoxColor = state.box_color || null;
+    $('currentCommand').textContent = state.command || '--';
+    $('commandTags').innerHTML =
+      '<span class="command-tag tag-block">● ' + state.block_color + '</span>' +
+      '<span class="command-tag tag-box">□ ' + (state.box_color || '--') + '</span>';
+
+    updateBlockDot(state.block_color);
+    updateBoxDot(state.box_color);
+  }
+
+  // --- Annotations ---
+  if (state.block_pixel_x != null && state.block_pixel_y != null) {
+    updateBlockAnnotation(state.block_pixel_x, state.block_pixel_y, state.block_color);
+  }
+  if (state.box_pixel_x != null && state.box_pixel_y != null) {
+    updateBoxAnnotation(state.box_pixel_x, state.box_pixel_y, state.box_color);
+  }
+
+  // --- Phase ---
+  var info = phaseMap[state.phase] || [state.phase_description || state.phase, 'running', 50];
+  updatePhase(state.phase, info[0], info[1], info[2]);
+
+  // --- Completed / Error / Stopped ---
+  if (state.phase === 'completed') {
+    $('stopBtn').style.display = 'none';
+    $('newTaskBtn').style.display = 'inline-block';
+    executionActive = false;
+    showMessage(state.message || '任务执行成功', 'success');
+  }
+  if (state.phase === 'error') {
+    $('stopBtn').style.display = 'none';
+    $('newTaskBtn').style.display = 'inline-block';
+    executionActive = false;
+    showMessage(state.error || '执行过程中出现错误', 'error');
+  }
+  if (state.phase === 'stopped') {
+    $('stopBtn').style.display = 'none';
+    $('newTaskBtn').style.display = 'inline-block';
+    executionActive = false;
+    showMessage('任务已被用户手动停止', 'info');
+  }
+});
+
+/* ================================================================
+   Socket.IO: Camera Frame
+   ================================================================ */
+socket.on('camera_frame', function (data) {
+  var feed = $('cameraFeed');
+  var placeholder = $('cameraPlaceholder');
+  feed.src = 'data:image/jpeg;base64,' + data.image;
+  feed.style.display = 'block';
+  placeholder.style.display = 'none';
+
+  // Redraw annotations after image renders
+  feed.onload = function () {
+    drawAnnotationFrame();
+  };
+  // Also try after a short delay (for cached images)
+  setTimeout(function () { drawAnnotationFrame(); }, 80);
+});
+
+/* ================================================================
+   Socket.IO: Command Error
+   ================================================================ */
+socket.on('command_error', function (data) {
+  showMessage(data.error, 'error');
+});
+
+/* ================================================================
+   Window Resize — redraw annotations
+   ================================================================ */
+window.addEventListener('resize', function () {
+  drawAnnotationFrame();
+});
+
+/* ================================================================
+   Example Chip Clicks
+   ================================================================ */
+document.querySelectorAll('.example-chip').forEach(function (chip) {
+  chip.addEventListener('click', function () {
+    $('commandInput').value = this.dataset.cmd;
+    $('commandInput').focus();
+  });
+});
+
+/* ================================================================
+   Input Events
+   ================================================================ */
+$('commandInput').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { executeCommand(); }
+});
+$('commandInput').addEventListener('input', function () {
+  validateInput();
+});
+
+/* ================================================================
+   Settings Panel
+   ================================================================ */
+var settingsLoaded = false;
+
+function openSettings() {
+  $('settingsOverlay').classList.add('show');
+  if (!settingsLoaded) {
+    loadSettings();
+    socket.emit('list_serial_ports');
+  }
+}
+
+function closeSettings() {
+  $('settingsOverlay').classList.remove('show');
+}
+
+function loadSettings() {
+  // 恢复后端地址
+  var savedBackend = localStorage.getItem('backendUrl');
+  $('setBackendUrl').value = savedBackend || window.location.origin;
+  // 从后端加载其他设置
+  socket.emit('get_settings');
+  settingsLoaded = true;
+}
+
+socket.on('current_settings', function (cfg) {
+  $('setSerialPort').value = cfg.serial_port || '';
+  $('setCameraId').value = cfg.camera_id !== undefined ? cfg.camera_id : '';
+  $('setApiBase').value = cfg.llm_api_base || '';
+  $('setModel').value = cfg.llm_model || '';
+
+  var keyInput = $('setApiKey');
+  if (cfg.llm_key_configured) {
+    keyInput.value = '•••••••• (已设置)';
+    keyInput.disabled = true;
+    keyInput.style.opacity = '0.6';
+  } else {
+    keyInput.value = '';
+    keyInput.placeholder = '未设置——在环境变量中设置 LLM_API_KEY';
+  }
+});
+
+socket.on('serial_ports_list', function (data) {
+  var select = $('setSerialPort');
+  var currentVal = select.value;
+  select.innerHTML = '';
+  if (!data.ports || data.ports.length === 0) {
+    select.innerHTML = '<option value="">未检测到串口</option>';
+    return;
+  }
+  data.ports.forEach(function (p) {
+    var opt = document.createElement('option');
+    opt.value = p.device;
+    opt.textContent = p.device + (p.description ? ' — ' + p.description : '');
+    select.appendChild(opt);
+  });
+  // 恢复之前的值
+  if (currentVal && Array.from(select.options).some(function (o) { return o.value === currentVal; })) {
+    select.value = currentVal;
+  }
+});
+
+function saveSettings() {
+  // 后端地址保存到 localStorage（不通过 SocketIO）
+  var backend = $('setBackendUrl').value.trim();
+  if (backend) {
+    localStorage.setItem('backendUrl', backend);
+  }
+
+  var data = {
+    serial_port: $('setSerialPort').value || null,
+    camera_id: $('setCameraId').value ? parseInt($('setCameraId').value) : null,
+    llm_api_base: $('setApiBase').value || null,
+    llm_model: $('setModel').value || null,
+  };
+  // 过滤空值
+  Object.keys(data).forEach(function (k) {
+    if (data[k] === null || data[k] === '') delete data[k];
+  });
+  socket.emit('save_settings', data);
+}
+
+socket.on('settings_saved', function (result) {
+  if (result.success) {
+    showMessage('设置已保存，部分配置（串口、摄像头）需要重启服务器后生效', 'info');
+    closeSettings();
+  } else {
+    showMessage('保存失败: ' + (result.error || '未知错误'), 'error');
+  }
+});
+
+// 点击遮罩关闭
+$('settingsOverlay').addEventListener('click', function (e) {
+  if (e.target === $('settingsOverlay')) {
+    closeSettings();
+  }
+});
+
+// ESC 关闭
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && $('settingsOverlay').classList.contains('show')) {
+    closeSettings();
+  }
+});
+
+/* ================================================================
+   Init
+   ================================================================ */
+$('commandInput').focus();
+</script>
+
+</body>
+</html>
